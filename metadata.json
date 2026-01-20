@@ -1,0 +1,8 @@
+{
+  "name": "Casa de Oração Fortaleza",
+  "description": "Aplicativo oficial da Igreja Casa de Oração Fortaleza para leitura bíblica, devocionais diários, planos de leitura e acompanhamento espiritual.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
