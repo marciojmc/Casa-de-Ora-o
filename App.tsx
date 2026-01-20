@@ -1,5 +1,5 @@
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { HomeView } from './views/Home';
 import { BibleView } from './views/Bible';
 import { DevotionalView } from './views/Devotional';
@@ -9,47 +9,75 @@ import { PlanDetailView } from './views/PlanDetail';
 import { NAVIGATION_TABS, READING_PLANS as INITIAL_PLANS } from './constants';
 import { UserStats, ReadingPlan } from './types';
 
+const STORAGE_KEYS = {
+  STATS: 'co_fortaleza_stats_v1',
+  PLANS: 'co_fortaleza_plans_v1'
+};
+
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState('home');
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
-  const [plans, setPlans] = useState<ReadingPlan[]>(INITIAL_PLANS);
   
-  const [stats, setStats] = useState<UserStats>({
-    userName: 'Irmão(ã)',
-    streak: 5,
-    chaptersRead: 42,
-    booksCompleted: 2,
-    totalMinutes: 120,
-    history: [
-      { date: '2024-05-15', chapters: 2 },
-      { date: '2024-05-16', chapters: 3 },
-      { date: '2024-05-17', chapters: 5 },
-      { date: '2024-05-18', chapters: 2 },
-      { date: '2024-05-19', chapters: 4 },
-      { date: '2024-05-20', chapters: 1 },
-      { date: '2024-05-21', chapters: 6 },
-    ]
+  // Carrega os planos iniciais do storage ou usa os padrões
+  const [plans, setPlans] = useState<ReadingPlan[]>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.PLANS);
+    if (saved) {
+      try { return JSON.parse(saved); } catch(e) { return INITIAL_PLANS; }
+    }
+    return INITIAL_PLANS;
   });
+  
+  const [stats, setStats] = useState<UserStats>(() => {
+    const saved = localStorage.getItem(STORAGE_KEYS.STATS);
+    const defaultStats = {
+      userName: 'Irmão(ã)',
+      streak: 0,
+      chaptersRead: 0,
+      booksCompleted: 0,
+      totalMinutes: 0,
+      history: []
+    };
+    if (saved) {
+      try { return JSON.parse(saved); } catch(e) { return defaultStats; }
+    }
+    return defaultStats;
+  });
+
+  // Persiste as mudanças automaticamente
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.STATS, JSON.stringify(stats));
+  }, [stats]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.PLANS, JSON.stringify(plans));
+  }, [plans]);
 
   const handleUpdateName = (newName: string) => {
     setStats(prev => ({ ...prev, userName: newName }));
   };
 
   const handleToggleTask = useCallback((planId: string, taskId: string) => {
-    setPlans(prev => prev.map(p => {
-      if (p.id !== planId) return p;
-      const newTasks = p.tasks.map(t => t.id === taskId ? { ...t, isCompleted: !t.isCompleted } : t);
-      const completed = newTasks.filter(t => t.isCompleted).length;
-      const progress = Math.round((completed / newTasks.length) * 100);
-      
-      // Update global stats if a task was checked
-      const task = p.tasks.find(t => t.id === taskId);
-      if (task && !task.isCompleted) {
-         setStats(s => ({ ...s, chaptersRead: s.chaptersRead + 1 }));
-      }
+    setPlans(prev => {
+      const updatedPlans = prev.map(p => {
+        if (p.id !== planId) return p;
+        const newTasks = p.tasks.map(t => t.id === taskId ? { ...t, isCompleted: !t.isCompleted } : t);
+        const completed = newTasks.filter(t => t.isCompleted).length;
+        const progress = Math.round((completed / newTasks.length) * 100);
+        
+        // Atualiza stats se uma tarefa foi marcada (apenas se for nova marcação)
+        const taskBefore = p.tasks.find(t => t.id === taskId);
+        if (taskBefore && !taskBefore.isCompleted) {
+           setStats(s => ({ 
+             ...s, 
+             chaptersRead: s.chaptersRead + 1,
+             history: [...s.history, { date: new Date().toISOString().split('T')[0], chapters: 1 }]
+           }));
+        }
 
-      return { ...p, tasks: newTasks, progress };
-    }));
+        return { ...p, tasks: newTasks, progress };
+      });
+      return updatedPlans;
+    });
   }, []);
 
   const handleSelectPlan = (id: string) => {
@@ -61,39 +89,44 @@ const App: React.FC = () => {
     if (activeTab === 'plan-detail' && selectedPlanId) {
       const plan = plans.find(p => p.id === selectedPlanId);
       if (plan) return (
-        <PlanDetailView 
-          plan={plan} 
-          onBack={() => setActiveTab('home')} 
-          onToggleTask={(taskId) => handleToggleTask(plan.id, taskId)}
-        />
+        <div className="view-transition h-full">
+          <PlanDetailView 
+            plan={plan} 
+            onBack={() => setActiveTab('home')} 
+            onToggleTask={(taskId) => handleToggleTask(plan.id, taskId)}
+          />
+        </div>
       );
     }
 
-    switch (activeTab) {
-      case 'home': return <HomeView onNavigate={setActiveTab} stats={stats} onSelectPlan={handleSelectPlan} plans={plans} />;
-      case 'bible': return <BibleView onChapterRead={() => setStats(prev => ({ ...prev, chaptersRead: prev.chaptersRead + 1 }))} />;
-      case 'devotional': return <DevotionalView />;
-      case 'daily-pause': return <DailyPauseView />;
-      case 'profile': return <ProfileView stats={stats} onUpdateName={handleUpdateName} />;
-      default: return <HomeView onNavigate={setActiveTab} stats={stats} onSelectPlan={handleSelectPlan} plans={plans} />;
-    }
+    const content = (() => {
+      switch (activeTab) {
+        case 'home': return <HomeView onNavigate={setActiveTab} stats={stats} onSelectPlan={handleSelectPlan} plans={plans} />;
+        case 'bible': return <BibleView onChapterRead={() => setStats(prev => ({ ...prev, chaptersRead: prev.chaptersRead + 1 }))} />;
+        case 'devotional': return <DevotionalView />;
+        case 'daily-pause': return <DailyPauseView />;
+        case 'profile': return <ProfileView stats={stats} onUpdateName={handleUpdateName} plans={plans} />;
+        default: return <HomeView onNavigate={setActiveTab} stats={stats} onSelectPlan={handleSelectPlan} plans={plans} />;
+      }
+    })();
+
+    return <div className="view-transition">{content}</div>;
   };
 
   return (
-    <div className="relative flex flex-col h-screen overflow-hidden max-w-md mx-auto border-x border-orange-100 bg-[#0f172a]">
+    <div className="relative flex flex-col h-screen overflow-hidden max-w-md mx-auto border-x border-white/10 bg-[#020617]">
       {/* VIBRANT MESH BACKGROUND */}
       <div className="absolute inset-0 pointer-events-none z-0">
-        <div className="absolute top-[-10%] left-[-10%] w-[100%] h-[50%] bg-orange-600 rounded-full blur-[120px] opacity-40 animate-pulse duration-[8s]"></div>
-        <div className="absolute bottom-[10%] right-[-20%] w-[80%] h-[60%] bg-rose-600 rounded-full blur-[100px] opacity-30 animate-bounce duration-[15s]"></div>
-        <div className="absolute top-[30%] left-[40%] w-[60%] h-[40%] bg-amber-400 rounded-full blur-[110px] opacity-30 animate-pulse duration-[10s]"></div>
-        <div className="absolute bottom-[-5%] left-[-5%] w-[70%] h-[40%] bg-indigo-600 rounded-full blur-[120px] opacity-10"></div>
+        <div className="absolute top-[-10%] left-[-10%] w-[100%] h-[50%] bg-orange-600 rounded-full blur-[120px] opacity-20 animate-pulse duration-[8s]"></div>
+        <div className="absolute bottom-[10%] right-[-20%] w-[80%] h-[60%] bg-rose-600 rounded-full blur-[100px] opacity-15 animate-bounce duration-[15s]"></div>
+        <div className="absolute top-[30%] left-[40%] w-[60%] h-[40%] bg-amber-400 rounded-full blur-[110px] opacity-15 animate-pulse duration-[10s]"></div>
       </div>
 
       <main className="relative flex-1 overflow-y-auto pb-24 no-scrollbar z-10">
         {renderView()}
       </main>
 
-      {/* Persistent Bottom Navigation Refined */}
+      {/* Bottom Navigation */}
       {activeTab !== 'plan-detail' && (
         <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md bg-white/5 backdrop-blur-[40px] border-t border-white/10 px-4 py-4 flex justify-around items-center z-50 rounded-t-[3rem] shadow-[0_-20px_80px_rgba(0,0,0,0.5)]">
           {NAVIGATION_TABS.map((tab) => {
@@ -109,7 +142,7 @@ const App: React.FC = () => {
                 <div 
                   className={`p-3 rounded-2xl transition-all duration-500 mb-1 ${
                     isActive 
-                      ? 'bg-amber-400/20 text-amber-400 shadow-[0_0_20px_rgba(251,191,36,0.3)] ring-1 ring-amber-400/30' 
+                      ? 'bg-orange-500/20 text-orange-400 shadow-[0_0_20px_rgba(249,115,22,0.3)] ring-1 ring-orange-400/30' 
                       : 'bg-transparent text-inherit'
                   }`}
                 >
@@ -122,7 +155,7 @@ const App: React.FC = () => {
                 <span 
                   className={`text-[9px] uppercase tracking-widest transition-all duration-500 ${
                     isActive 
-                      ? 'text-amber-400 font-black opacity-100 scale-100' 
+                      ? 'text-orange-400 font-black opacity-100 scale-100' 
                       : 'text-white/40 font-medium opacity-0 scale-90 translate-y-1'
                   }`}
                 >
@@ -130,7 +163,7 @@ const App: React.FC = () => {
                 </span>
 
                 {isActive && (
-                  <div className="absolute -bottom-1 w-1 h-1 bg-amber-400 rounded-full shadow-[0_0_10px_rgba(251,191,36,0.8)] animate-in fade-in zoom-in duration-500"></div>
+                  <div className="absolute -bottom-1 w-1 h-1 bg-orange-400 rounded-full shadow-[0_0_10px_rgba(249,115,22,0.8)]"></div>
                 )}
               </button>
             );
