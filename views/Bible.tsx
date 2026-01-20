@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Settings, ChevronLeft, ChevronRight, BookOpen, Share2, Loader2 } from 'lucide-react';
 import { fetchBibleText } from '../services/geminiService';
-import { MOCK_BIBLE_BOOKS } from '../constants';
+import { MOCK_BIBLE_BOOKS, BIBLE_STRUCTURE } from '../constants';
 import { BibleVersion } from '../types';
 
 interface BibleViewProps {
@@ -19,7 +19,12 @@ export const BibleView: React.FC<BibleViewProps> = ({ onChapterRead }) => {
   const [fontSize, setFontSize] = useState(18);
   const contentRef = useRef<HTMLDivElement>(null);
 
+  const getBookData = (bookName: string) => BIBLE_STRUCTURE.find(b => b.name === bookName);
+
   const loadText = async (targetBook: string, targetChapter: number, isPrefetch = false) => {
+    const bookData = getBookData(targetBook);
+    if (!bookData || targetChapter > bookData.chapters || targetChapter < 1) return;
+
     if (!isPrefetch) setLoading(true);
     
     try {
@@ -30,11 +35,12 @@ export const BibleView: React.FC<BibleViewProps> = ({ onChapterRead }) => {
           onChapterRead();
           contentRef.current?.scrollTo(0, 0);
           
-          // Lógica de Pré-carregamento: Busca o próximo capítulo silenciosamente
-          // (espera um pouco para não competir com o carregamento principal)
-          setTimeout(() => {
-            loadText(targetBook, targetChapter + 1, true);
-          }, 2000);
+          // Pré-carregamento apenas se o próximo capítulo existir
+          if (targetChapter < bookData.chapters) {
+            setTimeout(() => {
+              loadText(targetBook, targetChapter + 1, true);
+            }, 3000);
+          }
         }
       }
     } catch (error) {
@@ -49,18 +55,37 @@ export const BibleView: React.FC<BibleViewProps> = ({ onChapterRead }) => {
   }, [book, chapter, version]);
 
   const handleNextChapter = () => {
-    setChapter(prev => prev + 1);
+    const bookData = getBookData(book);
+    if (!bookData) return;
+
+    if (chapter < bookData.chapters) {
+      setChapter(prev => prev + 1);
+    } else {
+      // Vai para o próximo livro
+      const bookIndex = BIBLE_STRUCTURE.findIndex(b => b.name === book);
+      if (bookIndex < BIBLE_STRUCTURE.length - 1) {
+        setBook(BIBLE_STRUCTURE[bookIndex + 1].name);
+        setChapter(1);
+      }
+    }
   };
 
   const handlePrevChapter = () => {
     if (chapter > 1) {
       setChapter(prev => prev - 1);
+    } else {
+      // Vai para o livro anterior, no último capítulo
+      const bookIndex = BIBLE_STRUCTURE.findIndex(b => b.name === book);
+      if (bookIndex > 0) {
+        const prevBook = BIBLE_STRUCTURE[bookIndex - 1];
+        setBook(prevBook.name);
+        setChapter(prevBook.chapters);
+      }
     }
   };
 
   return (
     <div className="h-full flex flex-col bg-transparent">
-      {/* Bible Header - Transparent & Sleek */}
       <header className="px-6 py-6 border-b border-white/10 flex items-center justify-between bg-black/10 backdrop-blur-3xl sticky top-0 z-20">
         <button 
           onClick={() => setShowSelector(!showSelector)}
@@ -79,17 +104,19 @@ export const BibleView: React.FC<BibleViewProps> = ({ onChapterRead }) => {
               <option key={v} value={v} className="bg-slate-900">{v}</option>
             ))}
           </select>
-          <button onClick={() => setFontSize(prev => prev === 24 ? 16 : prev + 2)} className="text-white/60 hover:text-orange-400 bg-white/10 p-2.5 rounded-2xl transition-all active:rotate-90">
+          <button onClick={() => setFontSize(prev => prev >= 32 ? 16 : prev + 2)} className="text-white/60 hover:text-orange-400 bg-white/10 p-2.5 rounded-2xl transition-all active:rotate-90">
             <Settings className="w-5 h-5" />
           </button>
         </div>
       </header>
 
-      {/* Book Selector Overlay */}
       {showSelector && (
-        <div className="fixed inset-0 top-20 z-30 bg-black/80 backdrop-blur-3xl p-6 overflow-y-auto animate-in fade-in zoom-in duration-300">
-          <h3 className="text-2xl font-black mb-8 text-white tracking-tight text-center uppercase">Escolha o Livro</h3>
-          <div className="grid grid-cols-2 gap-4">
+        <div className="fixed inset-0 top-20 z-40 bg-black/90 backdrop-blur-3xl p-6 overflow-y-auto animate-in fade-in zoom-in duration-300">
+          <div className="flex justify-between items-center mb-8">
+            <h3 className="text-2xl font-black text-white tracking-tight uppercase">Livros</h3>
+            <button onClick={() => setShowSelector(false)} className="text-orange-500 font-bold uppercase text-[10px] tracking-widest">Fechar</button>
+          </div>
+          <div className="grid grid-cols-2 gap-4 pb-20">
             {MOCK_BIBLE_BOOKS.map(b => (
               <button 
                 key={b}
@@ -107,7 +134,6 @@ export const BibleView: React.FC<BibleViewProps> = ({ onChapterRead }) => {
         </div>
       )}
 
-      {/* Content Area - Vibrant Readable Space */}
       <div 
         ref={contentRef}
         className="flex-1 p-8 overflow-y-auto space-y-6 no-scrollbar bg-black/5"
@@ -132,16 +158,19 @@ export const BibleView: React.FC<BibleViewProps> = ({ onChapterRead }) => {
                 </span>
               </p>
             ))}
+            {verses.length === 0 && !loading && (
+              <div className="text-center p-10 opacity-50">
+                <p className="text-sm font-sans uppercase tracking-widest">Capítulo não encontrado.</p>
+              </div>
+            )}
           </div>
         )}
       </div>
 
-      {/* Footer Nav - Floating Glass Bar */}
       <footer className="p-6 border-t border-white/10 flex justify-between bg-black/20 backdrop-blur-3xl items-center z-20">
         <button 
-          disabled={chapter === 1}
           onClick={handlePrevChapter}
-          className="p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-orange-400 disabled:opacity-10 transition-all active:scale-90 hover:bg-white/10 shadow-2xl"
+          className="p-5 bg-white/5 border border-white/10 rounded-[1.5rem] text-orange-400 transition-all active:scale-90 hover:bg-white/10 shadow-2xl"
         >
           <ChevronLeft className="w-6 h-6" />
         </button>

@@ -1,14 +1,26 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
 
 const CACHE_PREFIX = 'bible_cache_v1_';
+
+const safeLocalStorage = {
+  getItem: (key: string) => {
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+  },
+  setItem: (key: string, value: string) => {
+    try { localStorage.setItem(key, value); } catch (e) { return false; }
+  },
+  removeItem: (key: string) => {
+    try { localStorage.removeItem(key); } catch (e) { }
+  }
+};
 
 export const generateDailyPause = async () => {
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: 'Gere uma "Pausa Diária" cristã em Português Brasil. Inclua 1 versículo curto, uma reflexão de 1 minuto e uma pergunta prática. Retorne em formato JSON estrito.',
+    contents: 'Gere uma "Pausa Diária" cristã em Português Brasil. Inclua 1 versículo curto, uma reflexão de 1 minuto e uma pergunta prática. Retorne estritamente em JSON.',
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -29,7 +41,7 @@ export const generateDailyPause = async () => {
 export const generateDevotional = async (theme: string) => {
   const response = await ai.models.generateContent({
     model: 'gemini-3-pro-preview',
-    contents: `Gere um devocional cristão edificante em Português Brasil sobre o tema: ${theme}. Inclua título, versículo base e conteúdo. Resposta em JSON.`,
+    contents: `Gere um devocional cristão edificante sobre o tema: ${theme}. Inclua título, versículo base e conteúdo. Resposta em JSON.`,
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -49,20 +61,18 @@ export const generateDevotional = async (theme: string) => {
 export const fetchBibleText = async (book: string, chapter: number, version: string) => {
   const cacheKey = `${CACHE_PREFIX}${version}_${book}_${chapter}`.replace(/\s+/g, '_');
   
-  // 1. Tenta recuperar do Cache Local (Persistente)
-  const cachedData = localStorage.getItem(cacheKey);
+  const cachedData = safeLocalStorage.getItem(cacheKey);
   if (cachedData) {
     try {
       return JSON.parse(cachedData);
     } catch (e) {
-      console.warn("Erro ao ler cache, buscando via API...", e);
+      safeLocalStorage.removeItem(cacheKey);
     }
   }
 
-  // 2. Busca via API se não houver no cache
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: `JSON: ${book} ${chapter} (${version}) PT-BR. Formato: [{verse:int, text:string}].`,
+    contents: `Retorne o texto de ${book} capítulo ${chapter} na versão ${version}. Responda apenas com um array JSON de objetos contendo "verse" (int) e "text" (string).`,
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -81,16 +91,13 @@ export const fetchBibleText = async (book: string, chapter: number, version: str
 
   const result = JSON.parse(response.text || '[]');
   
-  // 3. Salva no cache se o resultado for válido
   if (result && result.length > 0) {
-    try {
-      localStorage.setItem(cacheKey, JSON.stringify(result));
-    } catch (e) {
-      // Se o localStorage estiver cheio, limpa caches antigos
-      console.warn("LocalStorage cheio, limpando caches antigos...");
+    const success = safeLocalStorage.setItem(cacheKey, JSON.stringify(result));
+    if (!success) {
+      // Limpeza agressiva se falhar
       Object.keys(localStorage)
         .filter(k => k.startsWith(CACHE_PREFIX))
-        .forEach(k => localStorage.removeItem(k));
+        .forEach(k => safeLocalStorage.removeItem(k));
     }
   }
 
